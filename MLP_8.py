@@ -25,7 +25,7 @@ class Layer:
         if name == "sigmoid":
             return self.sigmoid(vector)
         elif name == "softmax":
-            return self.sigmoid(vector)
+            return self.softmax(vector)
     
     def sigmoid(self, vector):
         neg_exp_vector = np.exp(-vector)   # exponentiate components
@@ -36,17 +36,19 @@ class Layer:
         return exp_vec / sum(exp_vec)
     
     def layer_info(self):
+        print("Size:\n",self.weights_matrix.shape[0])
         print("Weight Matrix:\n",self.weights_matrix)
         print("Bias Vector:\n",self.bias_vector.T)
         print("Activation Function:",self.activation)
         print("----------------------------")
+        return self.weights_matrix.shape[0] + self.weights_matrix.shape[1] + self.bias_vector.shape[0]
 
 class NN:
     def __init__(self, Layers):
         """
         Args: 
         - Layers: A list of tuples where each tuple looks like: (int,"string")
-            example NN: [10000, (100, "relu"), (100, "softmax"), 10]
+            example NN: [10000, (100, "relu"), (100, "softmax")]
                 - 10000 : input shape
                 - (100, "relu") : a 100 neurons layer with relu
                 - (100, "softmax") : a 50 neurons layer with softmax
@@ -62,42 +64,53 @@ class NN:
 
         self.valid_activations = ["sigmoid","softmax"]
         # Parsing & Initializing a dense network of Layer Objects:
-        try:
-            for i, layer_i in enumerate(self.Layers_definition[1:-1]):
-                # Creating layers object:
-                layer_size = layer_i[0]
-                if i == 0:
-                    prev_layer_size = self.Layers_definition[0]
-                else:
-                    prev_layer_size = self.Layers_definition[i-1]
-                
-                # Activation values validation & initialization:
-                activation = layer_i[1]
-                if activation not in self.valid_activations:
-                    print(f"Only valid activation values = {self.valid_activations}")
-                    return 0
-                self.Layers.append(Layer(layer_size, prev_layer_size, activation))
+        for i, layer_i in enumerate(self.Layers_definition[1:], start=1):
+            # extract current layer’s size & activation
+            layer_size, activation = layer_i
 
-        except:
-            example = [10000, (100, "relu"), (100, "softmax"), 10]
-            print(f"Correct syntax for initilization:\n\t example:{example}")
+            # ALWAYS grab the immediately preceding entry
+            prev_def = self.Layers_definition[i-1]
+            # if the previous entry is a tuple, take its size; otherwise it’s an int
+            prev_layer_size = prev_def[0] if isinstance(prev_def, tuple) else prev_def
+
+            # activation check unchanged
+            if activation not in self.valid_activations:
+                print(f"Only valid activation values = {self.valid_activations}")
+                return 0
+
+            print(layer_size, prev_layer_size, activation)
+            self.Layers.append(Layer(layer_size, prev_layer_size, activation))
+            print(i)
+
+        # except:
+        #     example = [10000, (100, "relu"), (100, "softmax")]
+        #     print(f"Correct syntax for initilization:\n\t example:{example}")
             
     def feed_forward(self, input_vector):
-        for layer in self.Layers:
-            output_vector = layer(input_vector)
+        print("\n######## FEED FORWARD: ########")
+        for i, layer in enumerate(self.Layers):
+            if i == 0:
+                output_vector = layer.forward(input_vector)
+            else:
+                output_vector = layer.forward(output_vector)
+            print(f"{i+1}th Layer's Output {output_vector}")
         return output_vector
 
     def network_info(self):
+        total_parameters = 0
         for i, layer in enumerate(self.Layers):
-            print(f"\n-------Hidden Layer {i}-------")
-            layer.layer_info()
+            print(f"\n--------- Layer {i+1} ----------")
+            total_parameters += layer.layer_info()
             print()
-
+        print(f"Total Learnable Model Parameters = {total_parameters}")
 # Test:
 def main():
-    layers = [3, (3, "sigmoid"), (3, "softmax"), 3]
+    layers = [10, (100, "sigmoid"), (100, "sigmoid"), (5, "softmax")]
     MLP = NN(layers)
     MLP.network_info()
+    test_inp_vec = np.random.rand(10)
+    print(f"\n\nInput Vector = {test_inp_vec}")
+    MLP.feed_forward(test_inp_vec)
 
 if __name__=="__main__":
     main()
