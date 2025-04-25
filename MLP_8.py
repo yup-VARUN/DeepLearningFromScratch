@@ -2,14 +2,20 @@ import numpy as np
 
 class Layer:
     # this class cannot see its neighboring classes.
-    def __init__(self, n, input_size, activation):
+    def __init__(self, n, input_size, activation, initialization_method = "xavier"):
         """ 
         Args:
         1. n(int): layer size or number of neurons
         2. input_size(int): incoming vector size
         3. activation(str): activation function name
         """
-        self.weights_matrix = np.random.rand(n, input_size)
+        self.params_init_method = initialization_method
+        if self.params_init_method == "xavier":
+            a = 1/np.sqrt(n * input_size)
+            self.weights_matrix = np.random.uniform(low=-a, high=a, size=(n, input_size))
+        else:
+            self.weights_matrix = np.random.rand(n, input_size)
+        
         self.bias_vector = np.random.rand(n)
         self.activation = activation
 
@@ -18,7 +24,7 @@ class Layer:
         vector_out = self.activations(self.activation, pre_activation)
         return vector_out
     
-    def backward(self, ):
+    def backward(self, dLoss_dInputs, ):
         pass            
     
     def activations(self, name, vector):
@@ -26,14 +32,19 @@ class Layer:
             return self.sigmoid(vector)
         elif name == "softmax":
             return self.softmax(vector)
+        elif name == "relu":
+            return self.relu(vector)
     
+    def relu(self, vector):
+        return np.maximum(0,vector)
+
     def sigmoid(self, vector):
         neg_exp_vector = np.exp(-vector)   # exponentiate components
-        return 1 / (1 + neg_exp_vector)
+        return 1 / (1 + neg_exp_vector + 1e-7)
     
     def softmax(self, vector):
         exp_vec = np.exp(vector)   # exponentiate components
-        return exp_vec / sum(exp_vec)
+        return exp_vec / (sum(exp_vec) + 1e-7)
     
     def layer_info(self):
         print("Size:\n",self.weights_matrix.shape[0])
@@ -41,10 +52,10 @@ class Layer:
         print("Bias Vector:\n",self.bias_vector.T)
         print("Activation Function:",self.activation)
         print("----------------------------")
-        return self.weights_matrix.shape[0] + self.weights_matrix.shape[1] + self.bias_vector.shape[0]
+        return self.weights_matrix.shape[0] * self.weights_matrix.shape[1] + self.bias_vector.shape[0]
 
 class NN:
-    def __init__(self, Layers):
+    def __init__(self, Layers, debug = True):
         """
         Args: 
         - Layers: A list of tuples where each tuple looks like: (int,"string")
@@ -61,8 +72,9 @@ class NN:
         self.Layers_definition = Layers
         # List of Layer objects
         self.Layers = []
+        self.debug = debug
 
-        self.valid_activations = ["sigmoid","softmax"]
+        self.valid_activations = ["sigmoid","softmax", "relu"]
         # Parsing & Initializing a dense network of Layer Objects:
         for i, layer_i in enumerate(self.Layers_definition[1:], start=1):
             # extract current layer’s size & activation
@@ -70,21 +82,16 @@ class NN:
 
             # ALWAYS grab the immediately preceding entry
             prev_def = self.Layers_definition[i-1]
-            # if the previous entry is a tuple, take its size; otherwise it’s an int
+            # if the previous entry is a tuple, take its size; else it’s an int
             prev_layer_size = prev_def[0] if isinstance(prev_def, tuple) else prev_def
 
-            # activation check unchanged
+            # activation check
             if activation not in self.valid_activations:
                 print(f"Only valid activation values = {self.valid_activations}")
                 return 0
 
-            print(layer_size, prev_layer_size, activation)
+            self.debug and print(layer_size, prev_layer_size, activation)
             self.Layers.append(Layer(layer_size, prev_layer_size, activation))
-            print(i)
-
-        # except:
-        #     example = [10000, (100, "relu"), (100, "softmax")]
-        #     print(f"Correct syntax for initilization:\n\t example:{example}")
             
     def feed_forward(self, input_vector):
         print("\n######## FEED FORWARD: ########")
@@ -93,7 +100,7 @@ class NN:
                 output_vector = layer.forward(input_vector)
             else:
                 output_vector = layer.forward(output_vector)
-            print(f"{i+1}th Layer's Output {output_vector}")
+            self.debug and print(f"{i+1}th Layer's Output {output_vector}")
         return output_vector
 
     def network_info(self):
@@ -103,9 +110,10 @@ class NN:
             total_parameters += layer.layer_info()
             print()
         print(f"Total Learnable Model Parameters = {total_parameters}")
+
 # Test:
 def main():
-    layers = [10, (100, "sigmoid"), (100, "sigmoid"), (5, "softmax")]
+    layers = [10, (100, "sigmoid"), (100, "sigmoid"), (50, "softmax")]
     MLP = NN(layers)
     MLP.network_info()
     test_inp_vec = np.random.rand(10)
