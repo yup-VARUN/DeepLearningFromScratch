@@ -3,6 +3,8 @@ This is a from scratch implementation of entire deep learning stack including da
 
 The goal is to be able to build CNN from scratch for the **Intro to Deep Learning** Class
 
+They gave us the following templates: [GitHub](https://github.com/DongYang26/CSC4851_6851_25springDemo)
+
 # Setup Instructions:
 - For MacOS:
 ```
