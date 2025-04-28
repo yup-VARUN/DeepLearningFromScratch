@@ -290,7 +290,7 @@ class NN:
             self.debug and print(f"Updated Layer {layer_i}")
 
 
-    ############# Batch methods (placeholders, need implementation) #############
+    ##########################
     def forward(self, x_batch):  # Batch Forward
         """input_batch = List of input vectors/arrays"""
         outputs = []

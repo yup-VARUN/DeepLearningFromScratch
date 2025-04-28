@@ -2,24 +2,18 @@ import numpy as np
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-import sys # Import sys to print progress
 
 # ===================== Utility Functions ===================== #
 
 def relu(x):
-    """ Rectified Linear Unit activation function """
     return np.maximum(0, x)
 
 def softmax(x):
-    """ Softmax activation function """
-    # Subtract max for numerical stability to prevent overflow with large exponents
     exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
     return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
 
-# Helper function for cross-entropy loss
 def cross_entropy_loss(predictions, targets_one_hot):
-    """ Computes cross-entropy loss """
-    # Ensure predictions are not exactly zero or one to avoid log(0) or log(inf)
+    # avoiding log(0) or log(inf)
     epsilon = 1e-12
     predictions = np.clip(predictions, epsilon, 1. - epsilon)
     # Loss is - (1/N) * sum(targets * log(predictions))
@@ -45,8 +39,6 @@ def load_data():
 class CNN:
     def __init__(self, input_size, num_filters, kernel_size, fc_output_size, lr):
         """
-        Initializes the CNN model.
-
         Args:
             input_size (tuple): (channels, height, width) of the input image.
             num_filters (int): Number of filters in the convolutional layer.
@@ -68,44 +60,44 @@ class CNN:
         self.conv_output_height = H_in - K_h + 1
         self.conv_output_width = W_in - K_w + 1
 
-        # Shape of convolutional weights: (num_filters, C_in, K_h, K_w) -> (C_out, C_in, K_h, K_w)
-        # User variable name: c_weights
-        # Initialize with small random values (e.g., using He initialization scaling for ReLU)
-        # Factor is sqrt(2 / fan_in)
-        fan_in = C_in * K_h * K_w
-        std_dev = np.sqrt(2.0 / fan_in)
-        self.c_weights = np.random.randn(self.num_filters, C_in, self.kernel_size, self.kernel_size) * std_dev
-        # Shape of convolutional biases: (num_filters,) -> (C_out,)
-        # User variable name: c_bias
+        # Xavier initialization for the C layer too:
+        fan_in  = C_in * K_h * K_w
+        fan_out = self.num_filters * K_h * K_w
+        limit   = np.sqrt(6.0 / (fan_in + fan_out))
+        # weights ∼ Uniform(–limit, +limit)
+        self.c_weights = np.random.uniform(
+            -limit, limit,
+            size=(self.num_filters, C_in, self.kernel_size, self.kernel_size)
+        )
+        # biases still zeros
         self.c_bias = np.zeros(self.num_filters)
 
-        # --- Fully Connected Layer Initialization ---
+        ####### Fully Connected Layer Initialization #######
         # Calculate the size of the flattened output after convolution (and pooling, if any - none here)
         self.flattened_size = self.num_filters * self.conv_output_height * self.conv_output_width
 
-        # Shape of fully connected weights: (flattened_size, fc_output_size)
-        # User variable name: weights
-        # Initialize with small random values
-        fan_in_fc = self.flattened_size
-        std_dev_fc = np.sqrt(2.0 / fan_in_fc) # Using He initialization for weights connected to ReLU output
-        self.weights = np.random.randn(self.flattened_size, self.fc_output_size) * std_dev_fc
-        # Shape of fully connected biases: (fc_output_size,)
-        # User variable name: bias
+        # Xavier
+        fan_in_fc  = self.flattened_size
+        fan_out_fc = self.fc_output_size
+        limit = np.sqrt(6.0 / (fan_in_fc + fan_out_fc))
+        # weights ∼ Uniform(–limit, +limit)
+        self.weights = np.random.uniform(-limit, limit, size=(fan_in_fc, fan_out_fc))
+        # biases still zeros
         self.bias = np.zeros(self.fc_output_size)
 
-        # Variables to store intermediate values for backward pass (using user's names)
-        self.c_z1 = None        # Output of convolution before activation
-        self.c_a1 = None        # Output of ReLU activation
-        self.flattened_a1 = None # Output after flattening
-        self.z2 = None          # Output of fully connected layer before activation
-        self.a2 = None          # Output of Softmax activation (predictions)
+        # Variables to store intermediate values for backward pass
+        self.c_z1 = None
+        self.c_a1 = None
+        self.flattened_a1 = None
+        self.z2 = None
+        self.a2 = None
 
 
     def conv2d_forward(self, image, kernel, bias):
-        """ Helper function for 2D convolution (Forward Pass - assumes stride 1, valid padding) """
-        # image shape (N, C_in, H_in, W_in)
-        # kernel shape (C_out, C_in, K_h, K_w)
-        # bias shape (C_out,)
+        """Helper function for 2D convolution (Forward Pass - assuming stride 1 and validted padding)
+        image shape (N, C_in, H_in, W_in)
+        kernel shape (C_out, C_in, K_h, K_w)
+        bias shape (C_out,)"""
 
         N, C_in, H_in, W_in = image.shape
         C_out, _, K_h, K_w = kernel.shape
@@ -115,7 +107,7 @@ class CNN:
 
         output = np.zeros((N, C_out, H_out, W_out))
 
-        # Simple loop-based convolution (can be slow for larger inputs/batches)
+        # main convolution loop:
         for n in range(N):
             for co in range(C_out):
                 for ho in range(H_out):
@@ -130,18 +122,19 @@ class CNN:
         return output
 
     def conv2d_backward_weights(self, image, grad_output):
-        """ Helper function for 2D convolution (Backward Pass - Weights Gradient) """
-        # image shape (N, C_in, H_in, W_in)
-        # grad_output shape (N, C_out, H_out, W_out)
+        """ Helper function for 2D convolution (Backward Pass - Weights Gradient) 
+            image shape (N, C_in, H_in, W_in)
+            grad_output shape (N, C_out, H_out, W_out)
+        """
 
         N, C_in, H_in, W_in = image.shape
-        _, C_out, H_out, W_out = grad_output.shape
+        _, C_out, H_out, W_out = grad_output.shape # we don't need the first element
         K_h, K_w = self.kernel_size, self.kernel_size
 
         dL_dcW = np.zeros((C_out, C_in, K_h, K_w))
 
-        # Calculate gradient dL_dcW by cross-correlating input image with grad_output
-        # Sum over batch dimension and spatial output dimensions
+        # dL_dcW calculation by cross-correlating input image with grad_output:
+        # Summing over batch dimension and spatial output dimensions
         for co in range(C_out):
             for ci in range(C_in):
                 for kh in range(K_h):
@@ -158,15 +151,15 @@ class CNN:
         return dL_dcW
 
     def conv2d_backward_bias(self, grad_output):
-        """ Helper function for 2D convolution (Backward Pass - Bias Gradient) """
-        # grad_output shape (N, C_out, H_out, W_out)
-        # Sum over N, H_out, W_out and average over N
+        """ Helper function for 2D convolution (Backward Pass - Bias Gradient)
+        grad_output shape (N, C_out, H_out, W_out)
+        Sum over N, H_out, W_out and average over N
+        """
         dL_dc_bias = np.sum(grad_output, axis=(0, 2, 3)) / grad_output.shape[0]
         return dL_dc_bias
 
 
     def forward(self, x):
-        """ Forward propogation """
         # x shape: (batch_size, channels, height, width) - e.g., (N, 1, 28, 28) for MNIST
 
         # 1. Convolutional Layer
@@ -201,95 +194,56 @@ class CNN:
         return outputs
 
     def backward(self, x, y, pred):
-        """ Backward propagation """
-        # x: Original input batch (N, C_in, H_in, W_in)
-        # y: True labels (N,)
-        # pred: Predicted probabilities from forward pass (self.a2) (N, num_classes)
-
+        """ Backward propagation 
+        x: Original input batch (N, C_in, H_in, W_in)
+        y: True labels (N,)
+        pred: Predicted probabilities from forward pass (self.a2) (N, num_classes) """
         N = x.shape[0] # Batch size
         num_classes = self.fc_output_size
 
         # 1. one-hot encode the labels
         # Create a zero array of shape (N, num_classes)
-        # User variable name: one_hot_y
         one_hot_y = np.zeros((N, num_classes))
-        # Set the element at the true class index to 1 for each sample in the batch
         one_hot_y[np.arange(N), y] = 1
 
         # 2. Calculate softmax cross-entropy loss gradient
         # The gradient of the loss with respect to the output of the softmax layer (a2)
         # This is a simplified gradient when using combined Softmax and Cross-Entropy loss
         # dL/da2 = pred - one_hot_y
-        # User variable name: dL_da2
         dL_da2 = pred - one_hot_y # Shape (N, num_classes)
 
         # 3. Calculate fully connected layer gradient
-        # The gradient with respect to z2 (output before softmax) is the same as dL_da2
+        # grad wrt z2 (output before softmax) is the same as dL_dA2(instead of L I've been using 2 in CNN.py)
         dL_dz2 = dL_da2 # Shape (N, num_classes)
-
-        # Gradient with respect to fully connected weights (dL_dW)
-        # dL/dW = (flattened_a1).T @ dL_dz2
-        # Shape: (flattened_size, N) @ (N, num_classes) -> (flattened_size, num_classes)
-        # Average gradient over the batch
-        # User variable name: dL_dW
         dL_dW = np.dot(self.flattened_a1.T, dL_dz2) / N
-
-        # Gradient with respect to fully connected biases (dL_dB)
-        # dL/dB = sum(dL_dz2) over the batch dimension
-        # Shape: (num_classes,)
-        # Average gradient over the batch
-        # User variable name: dL_dB
         dL_dB = np.sum(dL_dz2, axis=0) / N
 
         # Gradient propogated back through the fully connected layer to the flattened layer
-        # dL/d_flattened_a1 = dL_dz2 @ weights.T
-        # Shape: (N, num_classes) @ (num_classes, flattened_size) -> (N, flattened_size)
-        # User variable name: dL_dflattened
         dL_dflattened = np.dot(dL_dz2, self.weights.T) # Shape (N, flattened_size)
 
         # 4. Backpropagate through ReLU
-        # Reshape the gradient from the flattened layer back to the shape of the ReLU output (c_a1)
-        # Shape: (N, flattened_size) -> (N, C_out, H_out, W_out)
-        # This gradient is with respect to c_a1 (output of ReLU)
-        # User variable name: dL_drelu_out
         dL_drelu_out = dL_dflattened.reshape(self.c_a1.shape) # Shape (N, C_out, H_out, W_out)
 
         # Apply the gradient of the ReLU activation function
         # The derivative of ReLU is 1 if the input (c_z1) was > 0, and 0 otherwise.
         # dL/dc_z1 = dL/dc_a1 * d(relu)/dc_z1
-        # Element-wise multiplication by the mask (c_z1 > 0)
-        # This gradient is with respect to c_z1 (output of convolution before ReLU)
-        # User variable name: dL_dc_out
+        # Doing selective element-wise multiplication by the mask (c_z1 > 0)
         dL_dc_out = dL_drelu_out * (self.c_z1 > 0) # Shape (N, C_out, H_out, W_out)
 
         # 5. Calculate convolution kernel gradient
         # Gradient with respect to convolutional weights (dL_dcW)
-        # This requires cross-correlation between the original input x and dL_dc_out
-        # User variable name: dL_dcW
+        # cross-correlation between the original input x and dL_dc_out
         dL_dcW = self.conv2d_backward_weights(x, dL_dc_out) # Shape (C_out, C_in, K_h, K_w)
 
         # Gradient with respect to convolutional biases
-        # This requires summing dL_dc_out over the batch and spatial dimensions, and averaging over the batch
-        # User variable name for bias gradient was not explicitly listed for step 5's output.
-        # We will calculate it and apply it to self.c_bias.
+        # summing dL_dc_out over the batch and spatial dimensions, and averaging over the batch
+        # calculate and apply directly to self.c_bias
         conv_bias_gradient = self.conv2d_backward_bias(dL_dc_out) # Shape (C_out,)
-
-
-        # 6. Update parameters
-        # Update convolutional weights using the calculated gradient and learning rate
+        # 6. Pparameters Updation:
         self.c_weights -= self.lr * dL_dcW
-
-        # Update convolutional biases using the calculated gradient and learning rate
         self.c_bias -= self.lr * conv_bias_gradient # Using the internally calculated bias gradient
-
-        # Update fully connected weights using the calculated gradient and learning rate
         self.weights -= self.lr * dL_dW
-
-        # Update fully connected biases using the calculated gradient and learning rate
         self.bias -= self.lr * dL_dB
-
-        # The backward function typically updates parameters and doesn't return a value.
-
 
     def train(self, x, y):
         """
@@ -302,47 +256,32 @@ class CNN:
         Returns:
             The calculated loss for the batch.
         """
-        # call forward function to get predictions
-        # User variable name for predictions: a2 (stored internally in self.a2)
-        # I've used local var - pred to hold the return value of forward for clarity
         pred = self.forward(x) # here pred is the same as "self.a2" after the forward pass
-
-        # calculate loss
         # Need one-hot encoded labels for cross-entropy loss calculation
         N = x.shape[0]
         num_classes = self.fc_output_size
-        # User variable name: one_hot_y
         one_hot_y = np.zeros((N, num_classes))
         one_hot_y[np.arange(N), y] = 1
-
-        # Use the cross_entropy_loss helper function to calculate the loss for the batch
-        # User variable name for loss: loss
         loss = cross_entropy_loss(pred, one_hot_y)
-
-        # call backward function to compute gradients and update parameters
         self.backward(x, y, pred) # Pass original input x, true labels y, and predictions pred
-
-        # Return the calculated loss for monitoring training progress
         return loss
 
 
 if __name__ == "__main__":
-    # Define hyperparameters for the CNN and training process
-    input_size = (1, 28, 28) # MNIST is 1 channel, 28x28 pixels
+    # Hyperparams :))
+    input_size = (1, 28, 28) # 28x28 sized matrix
     num_filters = 1
     kernel_size = 12
-    fc_output_size = 8
-    learning_rate = 0.0005
-    batch_size = 64
+    fc_output_size = 10
+    learning_rate = 0.001
+    batch_size = 128
     num_epochs = 5
 
-    # Load the MNIST dataset using the defined data loading functions
     train_loader, test_loader = load_data()
 
-    # Initialize the CNN model with the specified hyperparameters
     cnn_model = CNN(input_size, num_filters, kernel_size, fc_output_size, learning_rate)
 
-    # Print model architecture details
+    # printing model architecture details
     print("\nCNN Model Initialized:")
     print(f"\tInput Shape: {cnn_model.input_shape}")
     print(f"\tNum Filters: {cnn_model.num_filters}")
@@ -357,29 +296,23 @@ if __name__ == "__main__":
     print(f"\tFC Bias Shape: {cnn_model.bias.shape}")
 
 
-    # --- Training Loop ---
+    ##### Training Loop #####
     print("\nStarting Training...")
     for epoch in range(num_epochs):
-        # Keep track of the total loss for the epoch
         epoch_loss = 0
-        # Iterate over the training data in batches
         batch_count = 0
         for images, labels in train_loader:
-            # Convert PyTorch tensors from DataLoader to NumPy arrays
-            # Ensure the data types are appropriate for NumPy computations
+            # PyTorch tensors -> NumPy arrays
+            # making sure dtypes are appropriate for NumPy computations
             images_np = images.numpy().astype(np.float32)
             labels_np = labels.numpy().astype(np.int64) # Labels are typically integer class indices
 
-            # Perform a single training step (forward, loss, backward, update)
+            # Single training step (forward, loss, backward, update)
             loss = cnn_model.train(images_np, labels_np)
             epoch_loss += loss
             batch_count += 1
-
-            # Print training progress periodically
             if (batch_count % 100) == 0: # Print every 100 batches
-                 # Use sys.stdout.write and flush for printing on the same line
-                 sys.stdout.write(f'\r  Epoch {epoch+1}/{num_epochs}, Batch {batch_count}/{len(train_loader)}, Loss: {loss:.4f}')
-                 sys.stdout.flush()
+                 print(f' Epoch {epoch+1}/{num_epochs}, Batch {batch_count}/{len(train_loader)}, Loss: {loss:.4f}')
 
         # Calculate and print the average loss for the epoch
         avg_epoch_loss = epoch_loss / len(train_loader)
@@ -388,7 +321,7 @@ if __name__ == "__main__":
 
     print("\nTraining Finished.")
 
-    # --- Testing Loop ---
+    ##### Testing Loop #####
     print("\nStarting Testing...")
     correct_predictions = 0
     total_samples = 0
@@ -398,14 +331,8 @@ if __name__ == "__main__":
         # Convert PyTorch tensors to NumPy arrays
         images_np = images.numpy().astype(np.float32)
         labels_np = labels.numpy().astype(np.int64)
-
-        # Perform a forward pass to get predictions (probabilities) for the test batch
         predictions = cnn_model.forward(images_np) # predictions shape (N, num_classes)
-
-        # Get the predicted class index for each sample by finding the index with the highest probability
         predicted_classes = np.argmax(predictions, axis=1) # shape (N,)
-
-        # Compare predicted classes with true labels and count correct predictions
         correct_predictions += np.sum(predicted_classes == labels_np)
         total_samples += len(labels_np) # Add the number of samples in the current batch to total
 
